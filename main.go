@@ -1,91 +1,101 @@
-// main.go
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"net"
 	"os"
-	"os/exec"
+	"os/signal"
+	"syscall"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
-	"github.com/vishvananda/netlink"
 )
 
 func main() {
-	createBridgeAndVXLAN()
-	buildAndAttachXDP()
+	ifaceName := "wg0"
+	vni := uint32(100)
+	port := 4789
+
+	if err := AttachXDPWithVNI(ifaceName, vni); err != nil {
+		log.Fatalf("failed to attach XDP: %v", err)
+	}
+	fmt.Println("XDP attached to", ifaceName)
+
+	vxlanIf := "vxlan100"
+	if err := CreateVXLAN(vxlanIf, vni, port, ifaceName); err != nil {
+		log.Fatalf("failed to create vxlan interface: %v", err)
+	}
+
+	tunIf := "tun0"
+	tunIP := "10.10.0.1/24"
+	if err := CreateTUN(tunIf, tunIP); err != nil {
+		log.Fatalf("failed to create TUN: %v", err)
+	}
+
+	bridgeIf := "br0"
+	if err := CreateBridge(bridgeIf, []string{tunIf, vxlanIf}); err != nil {
+		log.Fatalf("failed to setup bridge: %v", err)
+	}
+
+	if err := SetupIptables(port, ifaceName); err != nil {
+		log.Fatalf("iptables error: %v", err)
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	<-sig
 }
 
-func createBridgeAndVXLAN() {
-	// ブリッジ作成
-	br := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0"}}
-	if err := netlink.LinkAdd(br); err != nil && !os.IsExist(err) {
-		log.Fatal("bridge add:", err)
-	}
-	netlink.LinkSetUp(br)
-
-	// VXLANインタフェース作成
-	vxlan := &netlink.Vxlan{
-		LinkAttrs:    netlink.LinkAttrs{Name: "vxlan100"},
-		VxlanId:      100,
-		Group:        net.ParseIP("239.1.1.1"),
-		VtepDevIndex: getIfIndex("eth0"),
-		Port:         4789,
-	}
-	if err := netlink.LinkAdd(vxlan); err != nil && !os.IsExist(err) {
-		log.Fatal("vxlan add:", err)
-	}
-	netlink.LinkSetUp(vxlan)
-	netlink.LinkSetMasterByIndex(vxlan, br.Index)
-
-	addr, _ := netlink.ParseAddr("10.10.10.1/24")
-	netlink.AddrAdd(vxlan, addr)
-}
-
-func buildAndAttachXDP() {
-	cmd := exec.Command("clang",
-		"-O2", "-target", "bpf",
-		"-c", "vxlan_xdp_filter.c",
-		"-o", "vxlan_xdp_filter.o")
-	var out bytes.Buffer
-	cmd.Stderr = &out
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		log.Fatalf("clang failed: %v\n%s", err, out.String())
-	}
-
-	spec, err := ebpf.LoadCollectionSpec("vxlan_xdp_filter.o")
+// AttachXDPWithVNI attaches the XDP program to a network interface
+// and inserts the specified VNI into the allowed_vni_map eBPF map.
+func AttachXDPWithVNI(iface string, vni uint32) error {
+	spec, err := ebpf.LoadCollectionSpec("xdp.o")
 	if err != nil {
-		log.Fatal("load spec:", err)
+		return fmt.Errorf("failed to load XDP spec: %w", err)
 	}
 
-	objs := struct {
-		Program *ebpf.Program `ebpf:"vxlan_filter"`
-	}{}
-	if err := spec.LoadAndAssign(&objs, nil); err != nil {
-		log.Fatal("load program:", err)
+	coll, err := ebpf.NewCollection(spec)
+	if err != nil {
+		return fmt.Errorf("failed to load XDP collection: %w", err)
 	}
 
-	iface, _ := net.InterfaceByName("eth0")
-	xdp, err := link.AttachXDP(link.XDPOptions{
-		Program:   objs.Program,
-		Interface: iface.Index,
+	prog := coll.Programs["filter_vxlan"]
+	if prog == nil {
+		return fmt.Errorf("XDP program 'filter_vxlan' not found")
+	}
+
+	m := coll.Maps["allowed_vni_map"]
+	if m == nil {
+		return fmt.Errorf("eBPF map 'allowed_vni_map' not found")
+	}
+
+	// 登録するVNIを許可
+	val := uint32(1)
+	if err := m.Put(vni, val); err != nil {
+		return fmt.Errorf("failed to insert VNI into map: %w", err)
+	}
+
+	// ネットワークインターフェースを取得してアタッチ
+	ifaceIndex := getIfaceIndex(iface)
+
+	_, err = link.AttachXDP(link.XDPOptions{
+		Program:   prog,
+		Interface: ifaceIndex,
+		Flags:     link.XDPGenericMode, // XDPNativeMode が使える場合は変更可能
 	})
 	if err != nil {
-		log.Fatal("attach xdp:", err)
+		return fmt.Errorf("failed to attach XDP: %w", err)
 	}
-	defer xdp.Close()
 
-	fmt.Println("XDP program attached successfully.")
+	fmt.Printf("XDP attached on %s with VNI %d\n", iface, vni)
+	return nil
 }
 
-func getIfIndex(name string) int {
-	link, err := netlink.LinkByName(name)
+func getIfaceIndex(name string) int {
+	iface, err := net.InterfaceByName(name)
 	if err != nil {
-		log.Fatal("get if index:", err)
+		panic(fmt.Sprintf("interface %s not found: %v", name, err))
 	}
-	return link.Attrs().Index
+	return iface.Index
 }
