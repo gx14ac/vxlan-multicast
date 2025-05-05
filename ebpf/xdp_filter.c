@@ -6,7 +6,7 @@ typedef unsigned short __u16;
 typedef unsigned int   __u32;
 
 #define ETH_P_IP     0x0800
-#define IPPROTO_UDP  17  // ← 明示的に定義（linux/in.h は使わない）
+#define IPPROTO_UDP  17  // ← 明示的に定義（linux/in.hは使わない）
 
 #ifndef SEC
 #define SEC(NAME) __attribute__((section(NAME), used))

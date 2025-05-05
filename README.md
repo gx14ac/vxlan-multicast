@@ -8,3 +8,7 @@ temp build, change to nix build.
 docker build -t vxlan-xdp .
 docker run --rm -v $(pwd)/out:/out vxlan-xdp
 ```
+
+## TODO
+- [] setting up vxlan and runetale
+- [] testable vxlan machines by vm

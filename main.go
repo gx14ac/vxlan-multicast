@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	ifaceName := "wg0"
+	ifaceName := "runetale0"
 	vni := uint32(100)
 	port := 4789
 
