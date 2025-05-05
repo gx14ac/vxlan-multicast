@@ -1,16 +1,11 @@
-BPF_CLANG ?= clang
-BPF_STRIP ?= llvm-strip
+CFLAGS = -O2 -g -Wall -target bpf -D__TARGET_ARCH_x86 -m64 \
+  -I/usr/include \
+  -I/usr/include/x86_64-linux-gnu \
+  -I/opt/libbpf/include \
+  -I/opt/libbpf/include/uapi \
+  --sysroot=/
 
-BPF_OBJ = xdp.o
-BPF_SRC = xdp_filter.c
+all: ebpf/xdp.o
 
-CFLAGS = -O2 -g -target bpf -D__TARGET_ARCH_x86 -Wall
-
-all: $(BPF_OBJ)
-
-$(BPF_OBJ): $(BPF_SRC)
-	$(BPF_CLANG) $(CFLAGS) -c $< -o $@
-	$(BPF_STRIP) -g $@
-
-clean:
-	rm -f *.o
+ebpf/xdp.o: ebpf/xdp_filter.c
+	clang $(CFLAGS) -c $< -o $@

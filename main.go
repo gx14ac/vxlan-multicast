@@ -17,10 +17,11 @@ func main() {
 	vni := uint32(100)
 	port := 4789
 
-	if err := AttachXDPWithVNI(ifaceName, vni); err != nil {
-		log.Fatalf("failed to attach XDP: %v", err)
-	}
-	fmt.Println("XDP attached to", ifaceName)
+	// todo: compile to XDP
+	// if err := AttachXDPWithVNI(ifaceName, vni); err != nil {
+	// 	log.Fatalf("failed to attach XDP: %v", err)
+	// }
+	// fmt.Println("XDP attached to", ifaceName)
 
 	vxlanIf := "vxlan100"
 	if err := CreateVXLAN(vxlanIf, vni, port, ifaceName); err != nil {
@@ -50,7 +51,7 @@ func main() {
 // AttachXDPWithVNI attaches the XDP program to a network interface
 // and inserts the specified VNI into the allowed_vni_map eBPF map.
 func AttachXDPWithVNI(iface string, vni uint32) error {
-	spec, err := ebpf.LoadCollectionSpec("xdp.o")
+	spec, err := ebpf.LoadCollectionSpec("ebpf/xdp.o")
 	if err != nil {
 		return fmt.Errorf("failed to load XDP spec: %w", err)
 	}

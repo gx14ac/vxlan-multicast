@@ -1,28 +1,37 @@
 package main
 
 import (
-    "fmt"
-    "os/exec"
+	"fmt"
+	"os/exec"
 
-    "github.com/songgao/water"
+	"golang.zx2c4.com/wireguard/tun"
 )
 
 func CreateTUN(name string, cidr string) error {
-    cfg := water.Config{DeviceType: water.TUN}
-    cfg.Name = name
-    tun, err := water.New(cfg)
-    if err != nil {
-        return err
-    }
+	device, err := tun.CreateTUN(name, 1500)
+	if err != nil {
+		return fmt.Errorf("failed to create TUN: %w", err)
+	}
 
-    cmds := [][]string{
-        {"ip", "addr", "add", cidr, "dev", tun.Name()},
-        {"ip", "link", "set", "dev", tun.Name(), "up"},
-    }
-    for _, cmd := range cmds {
-        if out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
-            return fmt.Errorf("tun setup failed: %s: %v", string(out), err)
-        }
-    }
-    return nil
+	tunName, err := device.Name()
+	if err != nil {
+		return fmt.Errorf("failed to get tun name: %w", err)
+	}
+
+	fmt.Println("Created TUN device:", tunName)
+
+	// LinuxコマンドでIP設定
+	cmds := [][]string{
+		{"ip", "addr", "add", cidr, "dev", tunName},
+		{"ip", "link", "set", "dev", tunName, "up"},
+	}
+
+	for _, cmd := range cmds {
+		out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to execute %v: %v\nOutput: %s", cmd, err, string(out))
+		}
+	}
+
+	return nil
 }
